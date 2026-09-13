@@ -43,6 +43,11 @@ public class Configuration : IPluginConfiguration
     public bool ShowUnlockOverlay = true;
     public bool MainRouteAutoInclude = true;
 
+    // Ship solver: individual submarine parts that may be used when generating builds.
+    // IDs 0-19 are the five standard sets; 20-39 are their improved variants.
+    // Defaults to all parts enabled for backwards-compatible solver behavior.
+    public bool[] ShipSolverParts = Enumerable.Repeat(true, 40).ToArray();
+
     public bool CalculateOnInteraction = false;
     public DurationLimit DurationLimit = DurationLimit.None;
     public int CustomHour = 42;

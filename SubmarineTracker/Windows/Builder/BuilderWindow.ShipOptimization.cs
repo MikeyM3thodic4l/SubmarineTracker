@@ -13,6 +13,9 @@ public partial class BuilderWindow
     public bool FuturePrediction;
     private Build.SubRank Rank;
     private const int PartsCount = 10;
+    private const int PartTypes = 4;
+    private static readonly string[] ShipPartSets = ["Shark", "Unkiu", "Whale", "Coelacanth", "Syldra", "MShark", "MUnkiu", "MWhale", "MCoelacanth", "MSyldra"];
+    private static readonly string[] ShipPartNames = ["Hull", "Stern", "Bow", "Bridge"];
     private TargetValues Target;
     private TargetValues LockedTarget;
 
@@ -20,50 +23,154 @@ public partial class BuilderWindow
 
     public void InitializeShip()
     {
-        AllBuilds.Clear();
+        EnsureShipSolverParts();
+        RebuildShipSolverBuilds();
+        Target = new TargetValues(LockedTarget);
+    }
 
-        Rank = Build.SubRank.From(Sheets.LastRank);
-        SelectedRank = (int) Rank.RowId;
+    private void EnsureShipSolverParts()
+    {
+        var parts = Plugin.Configuration.ShipSolverParts;
+        if (parts == null || parts.Length != PartsCount * PartTypes)
+            Plugin.Configuration.ShipSolverParts = Enumerable.Repeat(true, PartsCount * PartTypes).ToArray();
+    }
 
-        for (var hull = 0; hull < PartsCount; hull++)
+    private bool IsShipSolverPartEnabled(int set, int type)
+    {
+        EnsureShipSolverParts();
+        return Plugin.Configuration.ShipSolverParts[(set * PartTypes) + type];
+    }
+
+    private void SetShipSolverPartEnabled(int set, int type, bool enabled)
+    {
+        EnsureShipSolverParts();
+        Plugin.Configuration.ShipSolverParts[(set * PartTypes) + type] = enabled;
+    }
+
+    private int GetShipPartId(int set, int type)
+    {
+        // Sheet IDs are ordered Bow, Bridge, Hull, Stern, while the UI is Hull, Stern, Bow, Bridge.
+        var baseId = (set % 5) * 4 + 1 + (set >= 5 ? 20 : 0);
+        return type switch
         {
-            for (var stern = 0; stern < PartsCount; stern++)
-            {
-                for (var bow = 0; bow < PartsCount; bow++)
-                {
-                    for (var bridge = 0; bridge < PartsCount; bridge++)
-                    {
-                        var build = new Build.SubmarineBuild(SelectedRank, (hull * 4) + 3, (stern * 4) + 4, (bow * 4) + 1, (bridge * 4) + 2);
-                        AllBuilds.Add(build);
-                    }
-                }
-            }
+            0 => baseId + 2, // Hull
+            1 => baseId + 3, // Stern
+            2 => baseId,     // Bow
+            3 => baseId + 1, // Bridge
+            _ => baseId
+        };
+    }
+
+    private IEnumerable<int> EnabledShipPartIds(int type)
+    {
+        for (var set = 0; set < PartsCount; set++)
+            if (IsShipSolverPartEnabled(set, type))
+                yield return GetShipPartId(set, type);
+    }
+
+    private void RebuildShipSolverBuilds()
+    {
+        EnsureShipSolverParts();
+
+        var hulls = EnabledShipPartIds(0).ToArray();
+        var sterns = EnabledShipPartIds(1).ToArray();
+        var bows = EnabledShipPartIds(2).ToArray();
+        var bridges = EnabledShipPartIds(3).ToArray();
+
+        AllBuilds.Clear();
+        if (hulls.Length == 0 || sterns.Length == 0 || bows.Length == 0 || bridges.Length == 0)
+        {
+            LockedTarget = new TargetValues();
+            return;
         }
 
+        foreach (var hull in hulls)
+        foreach (var stern in sterns)
+        foreach (var bow in bows)
+        foreach (var bridge in bridges)
+            AllBuilds.Add(new Build.SubmarineBuild(SelectedRank, hull, stern, bow, bridge));
+
         LockedTarget = new TargetValues(AllBuilds);
-        Target = new TargetValues(LockedTarget);
     }
 
     public void RefreshList()
     {
-        var newList = new List<Build.SubmarineBuild>();
-        for (var hull = 0; hull < PartsCount; hull++)
+        RebuildShipSolverBuilds();
+        if (AllBuilds.Count == 0)
+            return;
+
+        Target.MinSurveillance = Math.Clamp(Target.MinSurveillance, LockedTarget.MinSurveillance, LockedTarget.MaxSurveillance);
+        Target.MaxSurveillance = Math.Clamp(Target.MaxSurveillance, LockedTarget.MinSurveillance, LockedTarget.MaxSurveillance);
+        Target.MinRetrieval = Math.Clamp(Target.MinRetrieval, LockedTarget.MinRetrieval, LockedTarget.MaxRetrieval);
+        Target.MaxRetrieval = Math.Clamp(Target.MaxRetrieval, LockedTarget.MinRetrieval, LockedTarget.MaxRetrieval);
+        Target.MinSpeed = Math.Clamp(Target.MinSpeed, LockedTarget.MinSpeed, LockedTarget.MaxSpeed);
+        Target.MaxSpeed = Math.Clamp(Target.MaxSpeed, LockedTarget.MinSpeed, LockedTarget.MaxSpeed);
+        Target.MinRange = Math.Clamp(Target.MinRange, LockedTarget.MinRange, LockedTarget.MaxRange);
+        Target.MaxRange = Math.Clamp(Target.MaxRange, LockedTarget.MinRange, LockedTarget.MaxRange);
+        Target.MinFavor = Math.Clamp(Target.MinFavor, LockedTarget.MinFavor, LockedTarget.MaxFavor);
+        Target.MaxFavor = Math.Clamp(Target.MaxFavor, LockedTarget.MinFavor, LockedTarget.MaxFavor);
+    }
+
+    private void DrawShipSolverPartOptions()
+    {
+        EnsureShipSolverParts();
+
+        if (!ImGui.CollapsingHeader("Available Ship Parts"))
+            return;
+
+        ImGui.TextUnformatted("Select individual parts to include in the solver:");
+        ImGuiHelpers.ScaledDummy(3.0f);
+
+        if (ImGui.Button("Enable All"))
         {
-            for (var stern = 0; stern < PartsCount; stern++)
+            Array.Fill(Plugin.Configuration.ShipSolverParts, true);
+            Plugin.Configuration.Save();
+            RefreshList();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Disable Improved"))
+        {
+            for (var set = 5; set < PartsCount; set++)
+                for (var type = 0; type < PartTypes; type++)
+                    SetShipSolverPartEnabled(set, type, false);
+            Plugin.Configuration.Save();
+            RefreshList();
+        }
+
+        using var table = ImRaii.Table("##shipSolverParts", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp);
+        if (!table.Success)
+            return;
+
+        ImGui.TableSetupColumn("Set");
+        foreach (var name in ShipPartNames)
+            ImGui.TableSetupColumn(name);
+        ImGui.TableHeadersRow();
+
+        for (var set = 0; set < PartsCount; set++)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(ShipPartSets[set]);
+
+            for (var type = 0; type < PartTypes; type++)
             {
-                for (var bow = 0; bow < PartsCount; bow++)
+                ImGui.TableNextColumn();
+                var enabled = IsShipSolverPartEnabled(set, type);
+                if (ImGui.Checkbox($"##solverPart_{set}_{type}", ref enabled))
                 {
-                    for (var bridge = 0; bridge < PartsCount; bridge++)
+                    // Never allow an entire component slot to have zero possible parts.
+                    // This keeps the solver's Cartesian product valid.
+                    if (!enabled && EnabledShipPartIds(type).Count() <= 1)
+                        enabled = true;
+                    else
                     {
-                        var build = new Build.SubmarineBuild(SelectedRank, (hull * 4) + 3, (stern * 4) + 4, (bow * 4) + 1, (bridge * 4) + 2);
-                        newList.Add(build);
+                        SetShipSolverPartEnabled(set, type, enabled);
+                        Plugin.Configuration.Save();
+                        RefreshList();
                     }
                 }
             }
         }
-
-        AllBuilds = newList;
-        LockedTarget = new TargetValues(AllBuilds);
     }
 
     public IEnumerable<Tuple<Build.SubmarineBuild, TimeSpan>> FilterBuilds()
@@ -135,6 +242,9 @@ public partial class BuilderWindow
 
         ImGui.SameLine();
         ImGui.Checkbox("Predict Future", ref FuturePrediction);
+
+        DrawShipSolverPartOptions();
+        ImGuiHelpers.ScaledDummy(5.0f);
 
         Helper.TextColored(ImGuiColors.DalamudViolet, Language.BuilderShipHeaderRoute);
         SelectedRoute();
