@@ -28,6 +28,109 @@ public partial class BuilderWindow
     private bool IgnoreShark;
     private bool IgnoreUnmodded;
 
+    private const int LevelingPartsCount = 10;
+    private const int LevelingPartTypes = 4;
+    private static readonly string[] LevelingPartSets = ["Shark", "Unkiu", "Whale", "Coelacanth", "Syldra", "MShark", "MUnkiu", "MWhale", "MCoelacanth", "MSyldra"];
+    private static readonly string[] LevelingPartNames = ["Hull", "Stern", "Bow", "Bridge"];
+
+    private void EnsureLevelingSolverParts()
+    {
+        var parts = Plugin.Configuration.LevelingSolverParts;
+        if (parts == null || parts.Length != LevelingPartsCount * LevelingPartTypes)
+            Plugin.Configuration.LevelingSolverParts = Enumerable.Repeat(true, LevelingPartsCount * LevelingPartTypes).ToArray();
+    }
+
+    private bool IsLevelingSolverPartEnabled(int set, int type)
+    {
+        EnsureLevelingSolverParts();
+        return Plugin.Configuration.LevelingSolverParts[(set * LevelingPartTypes) + type];
+    }
+
+    private void SetLevelingSolverPartEnabled(int set, int type, bool enabled)
+    {
+        EnsureLevelingSolverParts();
+        Plugin.Configuration.LevelingSolverParts[(set * LevelingPartTypes) + type] = enabled;
+    }
+
+    private int GetLevelingPartId(int set, int type)
+    {
+        // Sheet IDs are ordered Bow, Bridge, Hull, Stern, while the UI is Hull, Stern, Bow, Bridge.
+        var baseId = (set % 5) * 4 + 1 + (set >= 5 ? 20 : 0);
+        return type switch
+        {
+            0 => baseId + 2, // Hull
+            1 => baseId + 3, // Stern
+            2 => baseId,     // Bow
+            3 => baseId + 1, // Bridge
+            _ => baseId
+        };
+    }
+
+    private IEnumerable<int> EnabledLevelingPartIds(int type)
+    {
+        for (var set = 0; set < LevelingPartsCount; set++)
+            if (IsLevelingSolverPartEnabled(set, type))
+                yield return GetLevelingPartId(set, type);
+    }
+
+    private void DrawLevelingSolverPartOptions()
+    {
+        EnsureLevelingSolverParts();
+
+        if (!ImGui.CollapsingHeader("Available Ship Parts"))
+            return;
+
+        ImGui.TextUnformatted("Select individual parts to include in the leveling solver:");
+        ImGuiHelpers.ScaledDummy(3.0f);
+
+        if (ImGui.Button("Enable All##levelingParts"))
+        {
+            Array.Fill(Plugin.Configuration.LevelingSolverParts, true);
+            Plugin.Configuration.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Disable Improved##levelingParts"))
+        {
+            for (var set = 5; set < LevelingPartsCount; set++)
+                for (var type = 0; type < LevelingPartTypes; type++)
+                    SetLevelingSolverPartEnabled(set, type, false);
+            Plugin.Configuration.Save();
+        }
+
+        using var table = ImRaii.Table("##levelingSolverParts", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp);
+        if (!table.Success)
+            return;
+
+        ImGui.TableSetupColumn("Set");
+        foreach (var name in LevelingPartNames)
+            ImGui.TableSetupColumn(name);
+        ImGui.TableHeadersRow();
+
+        for (var set = 0; set < LevelingPartsCount; set++)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(LevelingPartSets[set]);
+
+            for (var type = 0; type < LevelingPartTypes; type++)
+            {
+                ImGui.TableNextColumn();
+                var enabled = IsLevelingSolverPartEnabled(set, type);
+                if (ImGui.Checkbox($"##levelingPart_{set}_{type}", ref enabled))
+                {
+                    // Never allow an entire component slot to have zero possible parts.
+                    if (!enabled && EnabledLevelingPartIds(type).Count() <= 1)
+                        enabled = true;
+                    else
+                    {
+                        SetLevelingSolverPartEnabled(set, type, enabled);
+                        Plugin.Configuration.Save();
+                    }
+                }
+            }
+        }
+    }
+
     private bool Processing;
     private DateTime StartTime;
     private DateTime ProgressStartTime;
@@ -114,6 +217,8 @@ public partial class BuilderWindow
             ImGui.Checkbox(Language.BuilderLevelingCheckboxAvgExp, ref AvgBonus);
             ImGuiComponents.HelpMarker(Language.BuilderLevelingTooltipAvgExp);
         }
+
+        DrawLevelingSolverPartOptions();
 
         ImGui.AlignTextToFramePadding();
         Helper.TextColored(ImGuiColors.DalamudViolet, Language.BestEXPEntryDurationLimit);
@@ -427,21 +532,25 @@ public partial class BuilderWindow
 
     private List<Build.RouteBuild> BuildParts()
     {
+        EnsureLevelingSolverParts();
+
+        var hulls = EnabledLevelingPartIds(0).ToArray();
+        var sterns = EnabledLevelingPartIds(1).ToArray();
+        var bows = EnabledLevelingPartIds(2).ToArray();
+        var bridges = EnabledLevelingPartIds(3).ToArray();
+
         var routeBuilds = new List<Build.RouteBuild>();
-        for (var hull = 0; hull < PartsCount; hull++)
+        if (hulls.Length == 0 || sterns.Length == 0 || bows.Length == 0 || bridges.Length == 0)
+            return routeBuilds;
+
+        foreach (var hull in hulls)
+        foreach (var stern in sterns)
+        foreach (var bow in bows)
+        foreach (var bridge in bridges)
         {
-            for (var stern = 0; stern < PartsCount; stern++)
-            {
-                for (var bow = 0; bow < PartsCount; bow++)
-                {
-                    for (var bridge = 0; bridge < PartsCount; bridge++)
-                    {
-                        var build = new Build.RouteBuild(1, (hull * 4) + 3, (stern * 4) + 4, (bow * 4) + 1, (bridge * 4) + 2);
-                        if (build.GetSubmarineBuild.HighestRankPart() < TargetRank && (build.IsValidSubBuild(CurrentBuild, IgnoreShark, IgnoreUnmodded) || IgnoreBuild))
-                            routeBuilds.Add(build);
-                    }
-                }
-            }
+            var build = new Build.RouteBuild(1, hull, stern, bow, bridge);
+            if (build.GetSubmarineBuild.HighestRankPart() < TargetRank && (build.IsValidSubBuild(CurrentBuild, IgnoreShark, IgnoreUnmodded) || IgnoreBuild))
+                routeBuilds.Add(build);
         }
 
         return routeBuilds;
