@@ -48,6 +48,10 @@ public class Configuration : IPluginConfiguration
     // Defaults to all parts enabled for backwards-compatible solver behavior.
     public bool[] ShipSolverParts = Enumerable.Repeat(true, 40).ToArray();
 
+    // Leveling solver: individual submarine parts that may be used when generating leveling builds.
+    // Kept separate from ShipSolverParts so the two solvers can have independent part restrictions.
+    public bool[] LevelingSolverParts = Enumerable.Repeat(true, 40).ToArray();
+
     public bool CalculateOnInteraction = false;
     public DurationLimit DurationLimit = DurationLimit.None;
     public int CustomHour = 42;
