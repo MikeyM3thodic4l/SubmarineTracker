@@ -48,7 +48,7 @@ public partial class BuilderWindow
     private DateTime ProgressStartTime;
 
     private Dictionary<int, Journey> LastCalc = new();
-    private (string Limit, bool IgnoreBuild, bool IgnoreUnlocks, bool MaximizeDurationLimit) LastOptions = ("", false, false, false);
+    private (string Limit, bool IgnoreBuild, bool IgnoreUnlocks, bool MaximizeDurationLimit, bool OptimizeExpPerMinute) LastOptions = ("", false, false, false, true);
 
     private bool AllowedChanged;
     private readonly List<uint> AllowedSectors = [];
@@ -131,6 +131,9 @@ public partial class BuilderWindow
             if (ImGui.Checkbox("Restrict parts pool to selected available parts##levelingSolver", ref Plugin.Configuration.RestrictLevelingSolverPartsPool))
                 Plugin.Configuration.Save();
             ImGuiComponents.HelpMarker("When enabled, the Leveling solver only considers parts selected in the Available Ship Parts tab, while retaining its normal leveling validity rules.");
+            if (ImGui.Checkbox("Optimize for EXP/min over EXP/trip##levelingSolverObjective", ref Plugin.Configuration.OptimizeLevelingExpPerMinute))
+                Plugin.Configuration.Save();
+            ImGuiComponents.HelpMarker("When enabled, the Leveling solver selects routes and builds by EXP per minute. When disabled, it uses total EXP per trip.");
         }
 
 
@@ -253,6 +256,7 @@ public partial class BuilderWindow
                 {
                     ImGui.TextUnformatted($"{Language.BuilderLevelingResultLimit} {LastOptions.Limit}");
                     ImGui.TextUnformatted($"{Language.BuilderLevelingResultMaximize} {LastOptions.MaximizeDurationLimit}");
+                    ImGui.TextUnformatted($"Leveling objective: {(LastOptions.OptimizeExpPerMinute ? "EXP/min" : "EXP/trip")}");
                     ImGui.TextUnformatted($"{Language.BuilderLevelingResultAvg} {AvgBonus}");
                     ImGui.TextUnformatted($"{Language.BuilderLevelingResultUnlocks} {LastOptions.IgnoreUnlocks}");
                 });
@@ -265,10 +269,11 @@ public partial class BuilderWindow
                 using var indent = ImRaii.PushIndent(10.0f);
                 BoxList.RenderList(LastCalc, modifier, 1.0f, pair =>
                 {
-                    var (i, (_, rankReached, leftover, routeExp, points, build)) = pair;
+                    var (i, journey) = pair;
+                    var (_, rankReached, leftover, routeExp, points, build) = journey;
                     Helper.TextColored(ImGuiColors.HealerGreen, $"{Language.BuilderLevelingStepBuild} {build}");
                     Helper.TextColored(ImGuiColors.HealerGreen, $"{Language.BuilderLevelingStepVoyage.Format(i)} {MapToThreeLetter(points[0], true)} {SectorsToPath(" -> ", points)}");
-                    Helper.TextColored(ImGuiColors.HealerGreen, $"{Language.BuilderLevelingStepGained} {routeExp:N0}");
+                    Helper.TextColored(ImGuiColors.HealerGreen, $"{Language.BuilderLevelingStepGained} {routeExp:N0} (EXP/min {journey.ExpPerMinute:N2})");
                     Helper.TextColored(ImGuiColors.HealerGreen, $"{Language.BuilderLevelingStepReached} {rankReached} - {GetRemaindExp(rankReached, leftover):P}%");
                 });
             }
@@ -307,7 +312,7 @@ public partial class BuilderWindow
 
         LastCalc = outTree;
 
-        LastOptions = (Plugin.Configuration.DurationLimit.GetName(), IgnoreBuild, IgnoreUnlocks, Plugin.Configuration.MaximizeDuration);
+        LastOptions = (Plugin.Configuration.DurationLimit.GetName(), IgnoreBuild, IgnoreUnlocks, Plugin.Configuration.MaximizeDuration, Plugin.Configuration.OptimizeLevelingExpPerMinute);
         Processing = false;
     }
 
@@ -386,20 +391,26 @@ public partial class BuilderWindow
                     }
 
                     // we can still continue if this would be false, we also want to check if allowed list is set
-                    var best = taskJourneys.Select(t => t.Result).OrderBy(t => t.RouteExp).Last();
+                    // The leveling objective is EXP per minute, not raw EXP per voyage.
+                    // A longer route can yield more total EXP while still being strictly
+                    // worse for leveling once its travel time is accounted for.
+                    var best = taskJourneys.Select(t => t.Result).OrderBy(t => t.OptimizationScore).Last();
                     if (best.Route.Length != 0 && !hasAllowed)
                         lastMap = (int) Sheets.ExplorationSheet.GetRow(best.Route[0]).Map.RowId - 2;
 
-                    if (bestJourney.RouteExp < best.RouteExp || (bestJourney.RouteExp == best.RouteExp && best.Build == lastBuild.Build.ToString()))
+                    if (bestJourney.OptimizationScore < best.OptimizationScore ||
+                        (bestJourney.OptimizationScore == best.OptimizationScore && bestJourney.Build == lastBuild.Build.ToString()))
                     {
                         if ((!curBuild.SameBuildWithoutRank(routeBuild) && lastBuild.Voyages >= SwapAfter) || (routeBuild.SameBuildWithoutRank(CurrentBuild) && !IgnoreBuild) || outTree.Count == 0)
                         {
                             curBuild = routeBuild;
-                            bestJourney = new Journey(routeBuild.Rank, ProgressRank, best.RouteExp, best.RouteExp, best.Route, routeBuild.ToString());
+                            bestJourney = new Journey(routeBuild.Rank, ProgressRank, best.RouteExp, best.RouteExp, best.Route, routeBuild.ToString())
+                            { ExpPerMinute = best.ExpPerMinute, OptimizationScore = best.OptimizationScore };
                         }
                         else if (curBuild.SameBuildWithoutRank(routeBuild))
                         {
-                            bestJourney = new Journey(routeBuild.Rank, ProgressRank, best.RouteExp, best.RouteExp, best.Route, routeBuild.ToString());
+                            bestJourney = new Journey(routeBuild.Rank, ProgressRank, best.RouteExp, best.RouteExp, best.Route, routeBuild.ToString())
+                            { ExpPerMinute = best.ExpPerMinute, OptimizationScore = best.OptimizationScore };
                         }
                     }
                 }
@@ -437,11 +448,21 @@ public partial class BuilderWindow
         routeBuild.Map = possibleMap;
 
         var allowedSectors = AllowedSectors.ToArray();
-        var path = Voyage.FindBestRoute(routeBuild, unlocked, [], allowedSectors, IgnoreUnlocks, AvgBonus);
+        // The Leveling solver can choose its objective independently of the global
+        // MaximizeDuration setting used by the general route/EXP solver.
+        var optimizeExpPerMinute = Plugin.Configuration.OptimizeLevelingExpPerMinute;
+        var path = Voyage.FindBestRoute(routeBuild, unlocked, [], allowedSectors, IgnoreUnlocks, AvgBonus, !optimizeExpPerMinute);
         var exp = Sectors.CalculateExpForSectors(path.PathPretty, routeBuild.GetSubmarineBuild, AvgBonus);
+        var duration = Voyage.CalculateDuration(path.PathPretty, routeBuild.GetSubmarineBuild.Speed);
+        var expPerMinute = duration > 0 ? exp / (duration / 60.0) : 0.0;
+        var optimizationScore = optimizeExpPerMinute ? expPerMinute : exp;
 
         Progress++;
-        return new Journey(routeBuild.Rank, ProgressRank, exp, exp, path.Path, routeBuild.ToString());
+        return new Journey(routeBuild.Rank, ProgressRank, exp, exp, path.Path, routeBuild.ToString())
+        {
+            ExpPerMinute = expPerMinute,
+            OptimizationScore = optimizationScore
+        };
     }
 
     private List<Build.RouteBuild> BuildParts()
@@ -480,5 +501,11 @@ public partial class BuilderWindow
         return routeBuilds;
     }
 
-    public record Journey(int OldRank, int RankReached, uint Leftover, uint RouteExp, uint[] Route, string Build);
+    public record Journey(int OldRank, int RankReached, uint Leftover, uint RouteExp, uint[] Route, string Build)
+    {
+        // RouteExp is always the raw EXP earned because rank progression uses raw EXP.
+        // ExpPerMinute is retained for display. OptimizationScore is the objective currently selected by the user.
+        public double ExpPerMinute { get; init; }
+        public double OptimizationScore { get; init; }
+    }
 }
