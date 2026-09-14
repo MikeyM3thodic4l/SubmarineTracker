@@ -23,59 +23,39 @@ public partial class BuilderWindow
 
     public void InitializeShip()
     {
-        EnsureShipSolverParts();
+        EnsureAvailableShipParts();
         RebuildShipSolverBuilds();
         Target = new TargetValues(LockedTarget);
     }
 
-    private void EnsureShipSolverParts()
+    private IEnumerable<int> ShipSolverPartIds(int type)
     {
-        var parts = Plugin.Configuration.ShipSolverParts;
-        if (parts == null || parts.Length != PartsCount * PartTypes)
-            Plugin.Configuration.ShipSolverParts = Enumerable.Repeat(true, PartsCount * PartTypes).ToArray();
-    }
+        if (!Plugin.Configuration.RestrictShipSolverPartsPool)
+            return Enumerable.Range(0, PartsCount).Select(set => GetShipPartId(set, type));
 
-    private bool IsShipSolverPartEnabled(int set, int type)
-    {
-        EnsureShipSolverParts();
-        return Plugin.Configuration.ShipSolverParts[(set * PartTypes) + type];
-    }
-
-    private void SetShipSolverPartEnabled(int set, int type, bool enabled)
-    {
-        EnsureShipSolverParts();
-        Plugin.Configuration.ShipSolverParts[(set * PartTypes) + type] = enabled;
+        EnsureAvailableShipParts();
+        return GetAvailableShipPartIds(type);
     }
 
     private int GetShipPartId(int set, int type)
     {
-        // Sheet IDs are ordered Bow, Bridge, Hull, Stern, while the UI is Hull, Stern, Bow, Bridge.
         var baseId = (set % 5) * 4 + 1 + (set >= 5 ? 20 : 0);
         return type switch
         {
-            0 => baseId + 2, // Hull
-            1 => baseId + 3, // Stern
-            2 => baseId,     // Bow
-            3 => baseId + 1, // Bridge
+            0 => baseId + 2,
+            1 => baseId + 3,
+            2 => baseId,
+            3 => baseId + 1,
             _ => baseId
         };
     }
 
-    private IEnumerable<int> EnabledShipPartIds(int type)
-    {
-        for (var set = 0; set < PartsCount; set++)
-            if (IsShipSolverPartEnabled(set, type))
-                yield return GetShipPartId(set, type);
-    }
-
     private void RebuildShipSolverBuilds()
     {
-        EnsureShipSolverParts();
-
-        var hulls = EnabledShipPartIds(0).ToArray();
-        var sterns = EnabledShipPartIds(1).ToArray();
-        var bows = EnabledShipPartIds(2).ToArray();
-        var bridges = EnabledShipPartIds(3).ToArray();
+        var hulls = ShipSolverPartIds(0).ToArray();
+        var sterns = ShipSolverPartIds(1).ToArray();
+        var bows = ShipSolverPartIds(2).ToArray();
+        var bridges = ShipSolverPartIds(3).ToArray();
 
         AllBuilds.Clear();
         if (hulls.Length == 0 || sterns.Length == 0 || bows.Length == 0 || bridges.Length == 0)
@@ -109,68 +89,6 @@ public partial class BuilderWindow
         Target.MaxRange = Math.Clamp(Target.MaxRange, LockedTarget.MinRange, LockedTarget.MaxRange);
         Target.MinFavor = Math.Clamp(Target.MinFavor, LockedTarget.MinFavor, LockedTarget.MaxFavor);
         Target.MaxFavor = Math.Clamp(Target.MaxFavor, LockedTarget.MinFavor, LockedTarget.MaxFavor);
-    }
-
-    private void DrawShipSolverPartOptions()
-    {
-        EnsureShipSolverParts();
-
-        if (!ImGui.CollapsingHeader("Available Ship Parts"))
-            return;
-
-        ImGui.TextUnformatted("Select individual parts to include in the solver:");
-        ImGuiHelpers.ScaledDummy(3.0f);
-
-        if (ImGui.Button("Enable All"))
-        {
-            Array.Fill(Plugin.Configuration.ShipSolverParts, true);
-            Plugin.Configuration.Save();
-            RefreshList();
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("Disable Improved"))
-        {
-            for (var set = 5; set < PartsCount; set++)
-                for (var type = 0; type < PartTypes; type++)
-                    SetShipSolverPartEnabled(set, type, false);
-            Plugin.Configuration.Save();
-            RefreshList();
-        }
-
-        using var table = ImRaii.Table("##shipSolverParts", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp);
-        if (!table.Success)
-            return;
-
-        ImGui.TableSetupColumn("Set");
-        foreach (var name in ShipPartNames)
-            ImGui.TableSetupColumn(name);
-        ImGui.TableHeadersRow();
-
-        for (var set = 0; set < PartsCount; set++)
-        {
-            ImGui.TableNextRow();
-            ImGui.TableNextColumn();
-            ImGui.TextUnformatted(ShipPartSets[set]);
-
-            for (var type = 0; type < PartTypes; type++)
-            {
-                ImGui.TableNextColumn();
-                var enabled = IsShipSolverPartEnabled(set, type);
-                if (ImGui.Checkbox($"##solverPart_{set}_{type}", ref enabled))
-                {
-                    // Never allow an entire component slot to have zero possible parts.
-                    // This keeps the solver's Cartesian product valid.
-                    if (!enabled && EnabledShipPartIds(type).Count() <= 1)
-                        enabled = true;
-                    else
-                    {
-                        SetShipSolverPartEnabled(set, type, enabled);
-                        Plugin.Configuration.Save();
-                        RefreshList();
-                    }
-                }
-            }
-        }
     }
 
     public IEnumerable<Tuple<Build.SubmarineBuild, TimeSpan>> FilterBuilds()
@@ -243,7 +161,12 @@ public partial class BuilderWindow
         ImGui.SameLine();
         ImGui.Checkbox("Predict Future", ref FuturePrediction);
 
-        DrawShipSolverPartOptions();
+        if (ImGui.Checkbox("Restrict parts pool to selected available parts##shipSolver", ref Plugin.Configuration.RestrictShipSolverPartsPool))
+        {
+            Plugin.Configuration.Save();
+            RefreshList();
+        }
+        ImGuiComponents.HelpMarker("When enabled, the Ship solver only considers parts selected in the Available Ship Parts tab.");
         ImGuiHelpers.ScaledDummy(5.0f);
 
         Helper.TextColored(ImGuiColors.DalamudViolet, Language.BuilderShipHeaderRoute);

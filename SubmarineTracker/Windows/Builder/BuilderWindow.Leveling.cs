@@ -28,108 +28,20 @@ public partial class BuilderWindow
     private bool IgnoreShark;
     private bool IgnoreUnmodded;
 
-    private const int LevelingPartsCount = 10;
-    private const int LevelingPartTypes = 4;
-    private static readonly string[] LevelingPartSets = ["Shark", "Unkiu", "Whale", "Coelacanth", "Syldra", "MShark", "MUnkiu", "MWhale", "MCoelacanth", "MSyldra"];
-    private static readonly string[] LevelingPartNames = ["Hull", "Stern", "Bow", "Bridge"];
-
-    private void EnsureLevelingSolverParts()
-    {
-        var parts = Plugin.Configuration.LevelingSolverParts;
-        if (parts == null || parts.Length != LevelingPartsCount * LevelingPartTypes)
-            Plugin.Configuration.LevelingSolverParts = Enumerable.Repeat(true, LevelingPartsCount * LevelingPartTypes).ToArray();
-    }
-
-    private bool IsLevelingSolverPartEnabled(int set, int type)
-    {
-        EnsureLevelingSolverParts();
-        return Plugin.Configuration.LevelingSolverParts[(set * LevelingPartTypes) + type];
-    }
-
-    private void SetLevelingSolverPartEnabled(int set, int type, bool enabled)
-    {
-        EnsureLevelingSolverParts();
-        Plugin.Configuration.LevelingSolverParts[(set * LevelingPartTypes) + type] = enabled;
-    }
-
     private int GetLevelingPartId(int set, int type)
     {
-        // Sheet IDs are ordered Bow, Bridge, Hull, Stern, while the UI is Hull, Stern, Bow, Bridge.
         var baseId = (set % 5) * 4 + 1 + (set >= 5 ? 20 : 0);
         return type switch
         {
-            0 => baseId + 2, // Hull
-            1 => baseId + 3, // Stern
-            2 => baseId,     // Bow
-            3 => baseId + 1, // Bridge
+            0 => baseId + 2,
+            1 => baseId + 3,
+            2 => baseId,
+            3 => baseId + 1,
             _ => baseId
         };
     }
 
-    private IEnumerable<int> EnabledLevelingPartIds(int type)
-    {
-        for (var set = 0; set < LevelingPartsCount; set++)
-            if (IsLevelingSolverPartEnabled(set, type))
-                yield return GetLevelingPartId(set, type);
-    }
-
-    private void DrawLevelingSolverPartOptions()
-    {
-        EnsureLevelingSolverParts();
-
-        if (!ImGui.CollapsingHeader("Available Ship Parts"))
-            return;
-
-        ImGui.TextUnformatted("Select individual parts to include in the leveling solver:");
-        ImGuiHelpers.ScaledDummy(3.0f);
-
-        if (ImGui.Button("Enable All##levelingParts"))
-        {
-            Array.Fill(Plugin.Configuration.LevelingSolverParts, true);
-            Plugin.Configuration.Save();
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("Disable Improved##levelingParts"))
-        {
-            for (var set = 5; set < LevelingPartsCount; set++)
-                for (var type = 0; type < LevelingPartTypes; type++)
-                    SetLevelingSolverPartEnabled(set, type, false);
-            Plugin.Configuration.Save();
-        }
-
-        using var table = ImRaii.Table("##levelingSolverParts", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp);
-        if (!table.Success)
-            return;
-
-        ImGui.TableSetupColumn("Set");
-        foreach (var name in LevelingPartNames)
-            ImGui.TableSetupColumn(name);
-        ImGui.TableHeadersRow();
-
-        for (var set = 0; set < LevelingPartsCount; set++)
-        {
-            ImGui.TableNextRow();
-            ImGui.TableNextColumn();
-            ImGui.TextUnformatted(LevelingPartSets[set]);
-
-            for (var type = 0; type < LevelingPartTypes; type++)
-            {
-                ImGui.TableNextColumn();
-                var enabled = IsLevelingSolverPartEnabled(set, type);
-                if (ImGui.Checkbox($"##levelingPart_{set}_{type}", ref enabled))
-                {
-                    // Never allow an entire component slot to have zero possible parts.
-                    if (!enabled && EnabledLevelingPartIds(type).Count() <= 1)
-                        enabled = true;
-                    else
-                    {
-                        SetLevelingSolverPartEnabled(set, type, enabled);
-                        Plugin.Configuration.Save();
-                    }
-                }
-            }
-        }
-    }
+    private const int LevelingPartsCount = 10;
 
     private bool Processing;
     private DateTime StartTime;
@@ -216,9 +128,11 @@ public partial class BuilderWindow
             ImGuiComponents.HelpMarker(Language.BuilderLevelingTooltipIgnoreUnmodified);
             ImGui.Checkbox(Language.BuilderLevelingCheckboxAvgExp, ref AvgBonus);
             ImGuiComponents.HelpMarker(Language.BuilderLevelingTooltipAvgExp);
+            if (ImGui.Checkbox("Restrict parts pool to selected available parts##levelingSolver", ref Plugin.Configuration.RestrictLevelingSolverPartsPool))
+                Plugin.Configuration.Save();
+            ImGuiComponents.HelpMarker("When enabled, the Leveling solver only considers parts selected in the Available Ship Parts tab, while retaining its normal leveling validity rules.");
         }
 
-        DrawLevelingSolverPartOptions();
 
         ImGui.AlignTextToFramePadding();
         Helper.TextColored(ImGuiColors.DalamudViolet, Language.BestEXPEntryDurationLimit);
@@ -532,12 +446,10 @@ public partial class BuilderWindow
 
     private List<Build.RouteBuild> BuildParts()
     {
-        EnsureLevelingSolverParts();
-
-        var hulls = EnabledLevelingPartIds(0).ToArray();
-        var sterns = EnabledLevelingPartIds(1).ToArray();
-        var bows = EnabledLevelingPartIds(2).ToArray();
-        var bridges = EnabledLevelingPartIds(3).ToArray();
+        var hulls = (Plugin.Configuration.RestrictLevelingSolverPartsPool ? GetAvailableShipPartIds(0) : Enumerable.Range(0, LevelingPartsCount).Select(set => GetLevelingPartId(set, 0))).ToArray();
+        var sterns = (Plugin.Configuration.RestrictLevelingSolverPartsPool ? GetAvailableShipPartIds(1) : Enumerable.Range(0, LevelingPartsCount).Select(set => GetLevelingPartId(set, 1))).ToArray();
+        var bows = (Plugin.Configuration.RestrictLevelingSolverPartsPool ? GetAvailableShipPartIds(2) : Enumerable.Range(0, LevelingPartsCount).Select(set => GetLevelingPartId(set, 2))).ToArray();
+        var bridges = (Plugin.Configuration.RestrictLevelingSolverPartsPool ? GetAvailableShipPartIds(3) : Enumerable.Range(0, LevelingPartsCount).Select(set => GetLevelingPartId(set, 3))).ToArray();
 
         var routeBuilds = new List<Build.RouteBuild>();
         if (hulls.Length == 0 || sterns.Length == 0 || bows.Length == 0 || bridges.Length == 0)
@@ -549,7 +461,19 @@ public partial class BuilderWindow
         foreach (var bridge in bridges)
         {
             var build = new Build.RouteBuild(1, hull, stern, bow, bridge);
-            if (build.GetSubmarineBuild.HighestRankPart() < TargetRank && (build.IsValidSubBuild(CurrentBuild, IgnoreShark, IgnoreUnmodded) || IgnoreBuild))
+            if (build.GetSubmarineBuild.HighestRankPart() >= TargetRank)
+                continue;
+
+            // When the user explicitly restricts the leveling solver to the selected
+            // Available Ship Parts pool, every selected combination is a candidate.
+            // The leveling solver must be allowed to use a part that is numerically
+            // worse than the currently equipped part: a downgrade can still produce a
+            // better overall build/route once the other three parts are considered.
+            //
+            // With the restriction disabled, retain the plugin's original leveling
+            // transition rules for backwards-compatible behaviour.
+            if (Plugin.Configuration.RestrictLevelingSolverPartsPool || IgnoreBuild ||
+                build.IsValidSubBuild(CurrentBuild, IgnoreShark, IgnoreUnmodded))
                 routeBuilds.Add(build);
         }
 
