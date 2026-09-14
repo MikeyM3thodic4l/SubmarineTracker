@@ -81,7 +81,7 @@ public static class Voyage
         return durations + FixedVoyageTime;
     }
 
-    public static BestRoute FindBestRoute(RouteBuild build, uint[] unlocked, uint[] mustInclude, uint[] allowed, bool ignoreUnlocks, bool avgExpBonus)
+    public static BestRoute FindBestRoute(RouteBuild build, uint[] unlocked, uint[] mustInclude, uint[] allowed, bool ignoreUnlocks, bool avgExpBonus, bool? maximizeDuration = null)
     {
         var valid = Sheets.ExplorationSheet
                 .Where(r => r.Map.RowId == build.MapRowId && !r.StartingPoint && r.RankReq <= build.Rank)
@@ -106,7 +106,7 @@ public static class Voyage
                                           );
                                })
                                .Where(t => t.Duration < Plugin.Configuration.DurationLimit.ToSeconds())
-                               .OrderByDescending(t => Plugin.Configuration.MaximizeDuration ? t.Exp : t.Exp / (t.Duration / 60))
+                               .OrderByDescending(t => (maximizeDuration ?? Plugin.Configuration.MaximizeDuration) ? t.Exp : t.Exp / (t.Duration / 60))
                                .ThenBy(t => t.Duration)
                                .FirstOrDefault();
 

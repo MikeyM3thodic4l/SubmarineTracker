@@ -56,6 +56,8 @@ public class Configuration : IPluginConfiguration
     // Whether each solver should restrict its candidate pool to AvailableShipParts.
     public bool RestrictShipSolverPartsPool = false;
     public bool RestrictLevelingSolverPartsPool = false;
+    // When enabled, the Leveling solver chooses routes/builds by EXP per minute; when disabled, it uses EXP per trip.
+    public bool OptimizeLevelingExpPerMinute = true;
 
     public bool CalculateOnInteraction = false;
     public DurationLimit DurationLimit = DurationLimit.None;
