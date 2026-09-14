@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "dgSpecHash": "O9mUn8DM/b4=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\ltmcm\\Downloads\\ABDM\\Compressed\\SubmarineTracker_leveling_allow_downgrades\\SubmarineTracker.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\ltmcm\\.nuget\\packages\\csvhelper\\33.1.0\\csvhelper.33.1.0.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\dalamudpackager\\15.0.0\\dalamudpackager.15.0.0.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\dotnet.reproduciblebuilds\\1.2.39\\dotnet.reproduciblebuilds.1.2.39.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\messagepack\\3.1.8\\messagepack.3.1.8.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\messagepack.annotations\\3.1.8\\messagepack.annotations.3.1.8.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\messagepackanalyzer\\3.1.8\\messagepackanalyzer.3.1.8.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\microsoft.net.stringtools\\17.11.4\\microsoft.net.stringtools.17.11.4.nupkg.sha512",
+    "C:\\Users\\ltmcm\\.nuget\\packages\\system.data.sqlite\\2.0.3\\system.data.sqlite.2.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

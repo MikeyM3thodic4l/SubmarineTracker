@@ -9,7 +9,7 @@ namespace SubmarineTracker;
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
 
     public NameOptions NameOption = NameOptions.Default;
 
@@ -43,14 +43,19 @@ public class Configuration : IPluginConfiguration
     public bool ShowUnlockOverlay = true;
     public bool MainRouteAutoInclude = true;
 
-    // Ship solver: individual submarine parts that may be used when generating builds.
+    // Global pool of individual submarine parts available to the solvers.
     // IDs 0-19 are the five standard sets; 20-39 are their improved variants.
     // Defaults to all parts enabled for backwards-compatible solver behavior.
-    public bool[] ShipSolverParts = Enumerable.Repeat(true, 40).ToArray();
+    public bool[] AvailableShipParts = Enumerable.Repeat(true, 40).ToArray();
 
-    // Leveling solver: individual submarine parts that may be used when generating leveling builds.
-    // Kept separate from ShipSolverParts so the two solvers can have independent part restrictions.
+    // Legacy fields retained so existing configurations can migrate their previous per-solver selections.
+    // They are no longer used after migration.
+    public bool[] ShipSolverParts = Enumerable.Repeat(true, 40).ToArray();
     public bool[] LevelingSolverParts = Enumerable.Repeat(true, 40).ToArray();
+
+    // Whether each solver should restrict its candidate pool to AvailableShipParts.
+    public bool RestrictShipSolverPartsPool = false;
+    public bool RestrictLevelingSolverPartsPool = false;
 
     public bool CalculateOnInteraction = false;
     public DurationLimit DurationLimit = DurationLimit.None;
