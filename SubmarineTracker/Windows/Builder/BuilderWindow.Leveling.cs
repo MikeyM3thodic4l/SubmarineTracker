@@ -13,6 +13,7 @@ namespace SubmarineTracker.Windows.Builder;
 public partial class BuilderWindow
 {
     private ExcelSheetSelector<SubmarineExploration>.ExcelSheetPopupOptions LevelingAllowedPopupOptions = null!;
+    private ExcelSheetSelector<SubmarineExploration>.ExcelSheetPopupOptions LevelingMustIncludePopupOptions = null!;
     private CancellationTokenSource CancelSource = new();
     private Thread? Thread;
 
@@ -52,13 +53,21 @@ public partial class BuilderWindow
 
     private bool AllowedChanged;
     private readonly List<uint> AllowedSectors = [];
+    private readonly HashSet<uint> MustIncludeSectors = [];
 
     private void InitializeLeveling()
     {
+        Func<SubmarineExploration, string> formatRow = e => $"{MapToThreeLetter(e.RowId, true)} - {NumToLetter(e.RowId, true)}. {UpperCaseStr(e.Destination)} (Rank {e.RankReq})";
+        var eligibleSectors = Sheets.ExplorationSheet.Where(r => r is { RankReq: > 0, StartingPoint: false });
         LevelingAllowedPopupOptions = new ExcelSheetSelector<SubmarineExploration>.ExcelSheetPopupOptions
         {
-            FormatRow = e => $"{MapToThreeLetter(e.RowId, true)} - {NumToLetter(e.RowId, true)}. {UpperCaseStr(e.Destination)} (Rank {e.RankReq})",
-            FilteredSheet = Sheets.ExplorationSheet.Where(r => r is { RankReq: > 0, StartingPoint: false }).Where(r => !AllowedSectors.Contains(r.RowId))
+            FormatRow = formatRow,
+            FilteredSheet = eligibleSectors.Where(r => !AllowedSectors.Contains(r.RowId))
+        };
+        LevelingMustIncludePopupOptions = new ExcelSheetSelector<SubmarineExploration>.ExcelSheetPopupOptions
+        {
+            FormatRow = formatRow,
+            FilteredSheet = eligibleSectors.Where(r => !MustIncludeSectors.Contains(r.RowId))
         };
     }
 
@@ -185,6 +194,34 @@ public partial class BuilderWindow
                 ImGui.TextUnformatted(Language.BestEXPEntryHoursandMinutes);
             }
         }
+
+        Helper.TextColored(ImGuiColors.DalamudViolet, $"{Language.TermsMustInclude}: {MustIncludeSectors.Count} / 5");
+        using (ImRaii.PushIndent(10.0f))
+        {
+            var mustListHeight = ImGui.GetTextLineHeight() * 6.5f;
+            using (ImRaii.Disabled(MustIncludeSectors.Count >= 5))
+            {
+                using (ImRaii.PushFont(UiBuilder.IconFont))
+                    ImGui.Button(FontAwesomeIcon.Plus.ToIconString(), new Vector2(30.0f * ImGuiHelpers.GlobalScale, mustListHeight));
+                if (ExcelSheetSelector<SubmarineExploration>.ExcelSheetPopup("LevelingMustIncludeAddPopup", out var row, LevelingMustIncludePopupOptions))
+                    MustIncludeSectors.Add(Sheets.ExplorationSheet.GetRow(row).RowId);
+            }
+            ImGui.SameLine();
+            using (var listBox = ImRaii.ListBox("##LevelingMustIncludeSectors", new Vector2(-1, mustListHeight)))
+            {
+                if (listBox.Success)
+                {
+                    foreach (var sectorId in MustIncludeSectors.ToArray().OrderBy(s => s))
+                    {
+                        var sector = Sheets.ExplorationSheet.GetRow(sectorId);
+                        if (ImGui.Selectable($"{MapToThreeLetter(sector.RowId, true)} - {NumToLetter(sector.RowId, true)}. {UpperCaseStr(sector.Destination)}"))
+                            MustIncludeSectors.Remove(sector.RowId);
+                    }
+                }
+            }
+        }
+
+        ImGuiHelpers.ScaledDummy(5.0f);
 
         Helper.TextColored(ImGuiColors.DalamudViolet, $"{Language.TermsAllowedSectors}: {AllowedSectors.Count}");
         using (ImRaii.PushIndent(10.0f))
@@ -451,7 +488,8 @@ public partial class BuilderWindow
         // The Leveling solver can choose its objective independently of the global
         // MaximizeDuration setting used by the general route/EXP solver.
         var optimizeExpPerMinute = Plugin.Configuration.OptimizeLevelingExpPerMinute;
-        var path = Voyage.FindBestRoute(routeBuild, unlocked, [], allowedSectors, IgnoreUnlocks, AvgBonus, !optimizeExpPerMinute);
+        var mustInclude = MustIncludeSectors.ToArray();
+        var path = Voyage.FindBestRoute(routeBuild, unlocked, mustInclude, allowedSectors, IgnoreUnlocks, AvgBonus, !optimizeExpPerMinute);
         var exp = Sectors.CalculateExpForSectors(path.PathPretty, routeBuild.GetSubmarineBuild, AvgBonus);
         var duration = Voyage.CalculateDuration(path.PathPretty, routeBuild.GetSubmarineBuild.Speed);
         var expPerMinute = duration > 0 ? exp / (duration / 60.0) : 0.0;
